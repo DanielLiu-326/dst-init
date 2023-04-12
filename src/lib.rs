@@ -1,9 +1,11 @@
 #![feature(ptr_metadata)]
 #![feature(unsize)]
+#![feature(alloc_layout_extra)]
 
 use std::alloc::Layout;
 use std::marker::{PhantomData, Unsize};
 use std::{mem, ptr};
+use std::ops::{Deref, DerefMut};
 use std::ptr::{NonNull, null, Pointee};
 pub use macros::dst;
 
@@ -166,12 +168,108 @@ impl<T> EmplaceInitializer for DirectInitializer<T> {
 }
 
 
+#[repr(C)]
+pub struct Dst<FST, DST: ?Sized> {
+    fst: FST,
+    dst: DST,
+}
+
+impl<FST, DST> Dst<FST, DST> {
+    #[inline(always)]
+    fn new(header: FST, body: DST) -> Self {
+        Self {
+            fst: header,
+            dst: body,
+        }
+    }
+}
+
+impl<FST, DST: ?Sized> Dst<FST, DST> {
+    #[inline(always)]
+    pub fn header(&self) -> &FST {
+        &self.fst
+    }
+    #[inline(always)]
+    pub fn header_mut(&mut self) -> &mut FST {
+        &mut self.fst
+    }
+    #[inline(always)]
+    pub fn body(&self) -> &DST {
+        &self.dst
+    }
+    #[inline(always)]
+    pub fn body_mut(&mut self) -> &mut DST {
+        &mut self.dst
+    }
+}
+
+impl<FST, DST: ?Sized> Deref for Dst<FST, DST> {
+    type Target = FST;
+
+    fn deref(&self) -> &Self::Target {
+        self.header()
+    }
+}
+impl<FST, DST: ?Sized> DerefMut for Dst<FST, DST> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.header_mut()
+    }
+}
+
+pub struct DstInitializer<FST, DST: ?Sized, INIT: EmplaceInitializer<Output = DST>> {
+    dst_init: INIT,
+    fst: FST,
+}
+
+impl<FST, DST: ?Sized, INIT: EmplaceInitializer<Output = DST>> DstInitializer<FST, DST, INIT> {
+    #[inline(always)]
+    pub fn new(fst: FST, dst_init: INIT) -> Self {
+        Self { dst_init, fst }
+    }
+    #[inline(always)]
+    pub fn fallback(self) -> (FST, INIT) {
+        (self.fst, self.dst_init)
+    }
+}
+
+impl<FST, DST: ?Sized, INIT: EmplaceInitializer<Output = DST>> EmplaceInitializer
+for DstInitializer<FST, DST, INIT>
+{
+    type Output = Dst<FST, DST>;
+
+    #[inline(always)]
+    fn layout(&mut self) -> Layout {
+        let layout = Layout::new::<FST>();
+        layout
+            .extend(self.dst_init.layout())
+            .unwrap()
+            .0
+            .pad_to_align()
+    }
+
+    #[inline(always)]
+    fn emplace(mut self, ptr: NonNull<u8>) -> NonNull<Self::Output> {
+        unsafe {
+            let fst_layout = Layout::new::<FST>();
+            let dst_layout = self.dst_init.layout();
+            let dst = ptr
+                .as_ptr()
+                .add(mem::size_of::<FST>())
+                .add(fst_layout.padding_needed_for(dst_layout.align()));
+            let DstInitializer { dst_init, fst } = self;
+            ptr.as_ptr().cast::<FST>().write(fst);
+            let (_, meta) = dst_init
+                .emplace(NonNull::new(dst.cast()).unwrap())
+                .to_raw_parts();
+            mem::transmute(NonNull::<DST>::from_raw_parts(ptr.cast(), meta))
+        }
+    }
+}
+
+
 #[cfg(test)]
 pub mod test {
-    use crate::{
-        CoercionInitializer, DirectInitializer, EmplaceInitializer,
-        SliceFnInit, SliceIterInitializer,
-    };
+    use crate::{CoercionInitializer, DirectInitializer, Dst, DstInitializer, EmplaceInitializer, SliceFnInit, SliceIterInitializer};
     use std::alloc::Layout;
     use std::fmt::{Debug, DebugStruct, Formatter};
     use std::ptr::NonNull;
@@ -280,15 +378,15 @@ pub mod test {
         }
     }
 
-    // #[test]
-    // fn test_dst_initializer() {
-    //     let mut init = DstInitializer::new(100u8, SliceIterInitializer::new(100, 0..100usize));
-    //     assert_eq!(init.layout(), Layout::new::<Dst<u8, [usize; 100]>>());
-    //     let data = alloc(init);
-    //     let mut i = 0;
-    //     for x in &data.dst {
-    //         assert_eq!(i, *x);
-    //         i += 1;
-    //     }
-    // }
+    #[test]
+    fn test_dst_initializer() {
+        let mut init = DstInitializer::new(100u8, SliceIterInitializer::new(100, 0..100usize));
+        assert_eq!(init.layout(), Layout::new::<Dst<u8, [usize; 100]>>());
+        let data = alloc(init);
+        let mut i = 0;
+        for x in &data.dst {
+            assert_eq!(i, *x);
+            i += 1;
+        }
+    }
 }
