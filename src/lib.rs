@@ -2,15 +2,17 @@
 #![feature(unsize)]
 #![feature(alloc_layout_extra)]
 #![feature(allocator_api)]
-
+#![feature(return_position_impl_trait_in_trait)]
 
 pub mod alloc;
 
+pub use macros::dst;
 use std::alloc::Layout;
 use std::marker::{PhantomData, Unsize};
+use std::ptr::{null, NonNull, Pointee};
 use std::{mem, ptr};
-use std::ptr::{NonNull, null, Pointee};
-pub use macros::dst;
+use std::rc::Rc;
+use std::sync::Arc;
 
 type Metadata<T> = <T as Pointee>::Metadata;
 
@@ -21,18 +23,17 @@ const fn metadata_of<T: Unsize<Dyn>, Dyn: ?Sized>() -> Metadata<Dyn> {
     ptr::metadata(dyn_null)
 }
 
-pub trait Initializer<DstInit:EmplaceInitializer>{
+pub trait Initializer<DstInit: EmplaceInitializer> {
     type Init;
 }
 
-pub type Init<T,DstInit> = <T as Initializer<DstInit>>::Init;
+pub type Init<T, DstInit> = <T as Initializer<DstInit>>::Init;
 
 pub trait EmplaceInitializer {
     type Output: ?Sized;
     fn layout(&mut self) -> Layout;
     fn emplace(self, ptr: NonNull<u8>) -> NonNull<Self::Output>;
 }
-
 
 pub struct SliceIterInitializer<Iter: Iterator> {
     size: usize,
@@ -71,19 +72,19 @@ impl<Iter: Iterator> EmplaceInitializer for SliceIterInitializer<Iter> {
     }
 }
 
-pub struct SliceFnInit<Item, F: FnMut() -> Item> {
+pub struct SliceFnInitializer<Item, F: FnMut() -> Item> {
     size: usize,
     f: F,
 }
 
-impl<Item, F: FnMut() -> Item> SliceFnInit<Item, F> {
+impl<Item, F: FnMut() -> Item> SliceFnInitializer<Item, F> {
     #[inline(always)]
     pub fn new(size: usize, f: F) -> Self {
         Self { size, f }
     }
 }
 
-impl<Item, F: FnMut() -> Item> EmplaceInitializer for SliceFnInit<Item, F> {
+impl<Item, F: FnMut() -> Item> EmplaceInitializer for SliceFnInitializer<Item, F> {
     type Output = [Item];
 
     #[inline(always)]
@@ -175,47 +176,126 @@ impl<T> EmplaceInitializer for DirectInitializer<T> {
     }
 }
 
+pub trait BoxExt: Sized {
+    type Output: ?Sized;
+    fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(init: Init) -> Self;
+}
+
+impl<T: ?Sized> BoxExt for Box<T> {
+    type Output = T;
+
+    fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(
+        mut init: Init,
+    ) -> Box<Self::Output> {
+        unsafe {
+            let layout = init.layout();
+            let mem = std::alloc::alloc(layout);
+            let obj = init.emplace(NonNull::new(mem).unwrap());
+            Box::from_raw(obj.as_ptr())
+        }
+    }
+}
+
+impl<T: ?Sized> BoxExt for Rc<T> {
+    type Output = T;
+
+    fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(
+        mut init: Init,
+    ) -> Rc<Self::Output> {
+        unsafe {
+            let layout = init.layout();
+            let mem = std::alloc::alloc(layout);
+            let obj = init.emplace(NonNull::new(mem).unwrap());
+            Rc::from_raw(obj.as_ptr())
+        }
+    }
+}
+
+impl<T: ?Sized> BoxExt for Arc<T> {
+    type Output = T;
+
+    fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(
+        mut init: Init,
+    ) -> Arc<Self::Output> {
+        unsafe {
+            let layout = init.layout();
+            let mem = std::alloc::alloc(layout);
+            let obj = init.emplace(NonNull::new(mem).unwrap());
+            Arc::from_raw(obj.as_ptr())
+        }
+    }
+}
+
+pub type Slice<T> = [T];
+
+pub trait SliceExt {
+    type Item;
+    fn fn_init<F>(size: usize, f: F) -> impl EmplaceInitializer<Output = [Self::Item]>
+    where
+        F: FnMut() -> Self::Item;
+    fn iter_init<Iter>(size: usize, iter: Iter) -> impl EmplaceInitializer<Output = [Self::Item]>
+    where
+        Iter: Iterator<Item = Self::Item>;
+}
+
+impl<T> SliceExt for Slice<T> {
+    type Item = T;
+
+    #[inline(always)]
+    fn fn_init<F>(size: usize, f: F) -> impl EmplaceInitializer<Output = [Self::Item]>
+    where
+        F: FnMut() -> Self::Item,
+    {
+        SliceFnInitializer::new(size, f)
+    }
+
+    fn iter_init<Iter>(size: usize, iter: Iter) -> impl EmplaceInitializer<Output = [Self::Item]>
+    where
+        Iter: Iterator<Item = Self::Item>,
+    {
+        SliceIterInitializer::new(size, iter)
+    }
+}
 
 #[cfg(test)]
 pub mod test {
-    use crate::{CoercionInitializer, DirectInitializer, EmplaceInitializer, SliceFnInit, SliceIterInitializer, Initializer};
+    use crate::{
+        CoercionInitializer, DirectInitializer, EmplaceInitializer, Initializer,
+        SliceFnInitializer, SliceIterInitializer,
+    };
+    use macros::dst;
+    use std::alloc;
     use std::alloc::Layout;
-    use std::fmt::{Debug, DebugStruct, Formatter};
+    use std::fmt::{Debug, Formatter};
     use std::ptr::NonNull;
-    use std::{alloc, mem};
-    use core::marker::PhantomData;
-    use macros::{dst};
 
     #[dst]
     #[derive(Debug)]
-    struct Test<A,B,C,D>{
-        a:A,
-        b:B,
-        c:C,
-        dst:[(C,D)],
+    struct Test<A, B, C, D> {
+        a: A,
+        b: B,
+        c: C,
+        dst: [(C, D)],
     }
 
     #[dst]
     #[derive(Debug)]
-    struct Test1<A,B,C,D>{
-        a:usize,
-        t:Test<A,B,C,D>,
+    struct Test1<A, B, C, D> {
+        a: usize,
+        t: Test<A, B, C, D>,
     }
 
     #[test]
-    fn test(){
+    fn test() {
         let t = TestInit {
-            a:1usize,
-            b:1u8,
-            c:1u8,
-            dst:SliceIterInitializer::new(3,(0..).map(|i|{(i as u8 , i as usize)}))
+            a: 1usize,
+            b: 1u8,
+            c: 1u8,
+            dst: SliceIterInitializer::new(3, (0..).map(|i| (i as u8, i as usize))),
         };
-        let u = Test1Init{
-            a:1usize,
-            t
-        };
+        let u = Test1Init { a: 1usize, t };
         let a = alloc(u);
-        println!("{:?}",a)
+        println!("{:?}", a)
     }
 
     fn alloc<O: ?Sized, Init: EmplaceInitializer<Output = O>>(mut init: Init) -> Box<O> {
@@ -300,7 +380,7 @@ pub mod test {
     #[test]
     fn test_slice_fn_initializer() {
         let mut i = 0;
-        let init = SliceFnInit::new(10065, || {
+        let init = SliceFnInitializer::new(10065, || {
             i += 1;
             i
         });
@@ -320,16 +400,4 @@ pub mod test {
             assert_eq!(data[x], x)
         }
     }
-
-    // #[test]
-    // fn test_dst_initializer() {
-    //     let mut init = DstInitializer::new(100u8, SliceIterInitializer::new(100, 0..100usize));
-    //     assert_eq!(init.layout(), Layout::new::<Dst<u8, [usize; 100]>>());
-    //     let data = alloc(init);
-    //     let mut i = 0;
-    //     for x in &data.dst {
-    //         assert_eq!(i, *x);
-    //         i += 1;
-    //     }
-    // }
 }

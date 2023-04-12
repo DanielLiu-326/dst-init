@@ -3,22 +3,11 @@
 #![feature(decl_macro)]
 
 use proc_macro::{TokenStream};
-use std::alloc::Layout;
-use std::any::Any;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::process::Output;
-use std::ptr::NonNull;
-use convert_case::{Case, Casing};
-use proc_macro2::{Ident, Punct, Span};
 use quote::{format_ident, ToTokens};
-use syn::{Token, GenericParam, ItemEnum, ItemStruct, Path, Type, TypeParam, ImplItem, ImplItemType, GenericArgument, ExprField, Member, Index, Attribute, Fields, ItemImpl};
-use syn::ext::IdentExt;
-use syn::spanned::Spanned;
+use syn::{GenericParam, ItemStruct, GenericArgument, Member, Index, ItemImpl};
 use quote::{quote};
 use syn::punctuated::Punctuated;
-use syn::token::{Comma, Impl};
-use syn::parse_quote::ParseQuote;
+use syn::token::{Comma};
 
 /// Origin code:
 /// ```rust
@@ -55,15 +44,13 @@ use syn::parse_quote::ParseQuote;
 /// ```
 #[proc_macro_attribute]
 pub fn dst(_attr:TokenStream, input:TokenStream) -> TokenStream{
-    let mut item_struct:ItemStruct = syn::parse(input.clone()).unwrap();
-    let mut struct_name = item_struct.ident.clone();
-    let mut struct_vis = item_struct.vis.clone();
-    let mut struct_where_clause = item_struct.generics.where_clause.clone();
+    let item_struct:ItemStruct = syn::parse(input.clone()).unwrap();
+    let struct_name = item_struct.ident.clone();
     let mut struct_generics_param = item_struct.generics.params.clone();
-    let mut struct_where_clause = item_struct.generics.where_clause.clone();
-    let mut dst_type = item_struct.fields.iter().last().unwrap().ty.clone();
-    let mut field_num = item_struct.fields.iter().len();
-    let mut dst_field:Member = item_struct.fields.iter().last().unwrap().ident
+    let struct_where_clause = item_struct.generics.where_clause.clone();
+    let dst_type = item_struct.fields.iter().last().unwrap().ty.clone();
+    let field_num = item_struct.fields.iter().len();
+    let dst_field:Member = item_struct.fields.iter().last().unwrap().ident
         .clone().map_or(Member::Unnamed(Index::from(field_num)),|i|{
         Member::Named(i)
     });
@@ -72,7 +59,7 @@ pub fn dst(_attr:TokenStream, input:TokenStream) -> TokenStream{
         struct_generics_param.push_punct(Comma::default());
     }
 
-    let mut struct_generics_arg = struct_generics_param
+    let struct_generics_arg = struct_generics_param
         .iter()
         .fold(Punctuated::<GenericArgument, Comma>::new(),|mut last,i|{
             let push = match i.clone(){
@@ -93,7 +80,7 @@ pub fn dst(_attr:TokenStream, input:TokenStream) -> TokenStream{
 
     let mut new_struct = quote!(#[repr(C)]);
     new_struct.extend(item_struct.into_token_stream());
-    let mut new_struct:ItemStruct = syn::parse(new_struct.into()).unwrap();
+    let new_struct:ItemStruct = syn::parse(new_struct.into()).unwrap();
 
     let mut fst_struct = new_struct.clone();
     let fst_ident = format_ident!("{}Fst",struct_name);
