@@ -6,7 +6,7 @@
 
 pub mod alloc;
 
-pub use macros::dst;
+pub use dst_init_macros as macros;
 use std::alloc::Layout;
 use std::marker::{PhantomData, Unsize};
 use std::ptr::{null, NonNull, Pointee};
@@ -263,7 +263,7 @@ pub mod test {
         CoercionInitializer, DirectInitializer, EmplaceInitializer, Initializer,
         SliceFnInitializer, SliceIterInitializer,
     };
-    use macros::dst;
+    use crate::macros::dst;
     use std::alloc;
     use std::alloc::Layout;
     use std::fmt::{Debug, Formatter};
