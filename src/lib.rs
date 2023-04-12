@@ -1,5 +1,10 @@
 #![feature(ptr_metadata)]
 #![feature(unsize)]
+#![feature(alloc_layout_extra)]
+#![feature(allocator_api)]
+
+
+pub mod alloc;
 
 use std::alloc::Layout;
 use std::marker::{PhantomData, Unsize};
@@ -16,6 +21,11 @@ const fn metadata_of<T: Unsize<Dyn>, Dyn: ?Sized>() -> Metadata<Dyn> {
     ptr::metadata(dyn_null)
 }
 
+pub trait Initializer<DstInit:EmplaceInitializer>{
+    type Init;
+}
+
+pub type Init<T,DstInit> = <T as Initializer<DstInit>>::Init;
 
 pub trait EmplaceInitializer {
     type Output: ?Sized;
@@ -168,14 +178,45 @@ impl<T> EmplaceInitializer for DirectInitializer<T> {
 
 #[cfg(test)]
 pub mod test {
-    use crate::{
-        CoercionInitializer, DirectInitializer, EmplaceInitializer,
-        SliceFnInit, SliceIterInitializer,
-    };
+    use crate::{CoercionInitializer, DirectInitializer, EmplaceInitializer, SliceFnInit, SliceIterInitializer, Initializer};
     use std::alloc::Layout;
     use std::fmt::{Debug, DebugStruct, Formatter};
     use std::ptr::NonNull;
     use std::{alloc, mem};
+    use core::marker::PhantomData;
+    use macros::{dst};
+
+    #[dst]
+    #[derive(Debug)]
+    struct Test<A,B,C,D>{
+        a:A,
+        b:B,
+        c:C,
+        dst:[(C,D)],
+    }
+
+    #[dst]
+    #[derive(Debug)]
+    struct Test1<A,B,C,D>{
+        a:usize,
+        t:Test<A,B,C,D>,
+    }
+
+    #[test]
+    fn test(){
+        let t = TestInit {
+            a:1usize,
+            b:1u8,
+            c:1u8,
+            dst:SliceIterInitializer::new(3,(0..).map(|i|{(i as u8 , i as usize)}))
+        };
+        let u = Test1Init{
+            a:1usize,
+            t
+        };
+        let a = alloc(u);
+        println!("{:?}",a)
+    }
 
     fn alloc<O: ?Sized, Init: EmplaceInitializer<Output = O>>(mut init: Init) -> Box<O> {
         unsafe {
