@@ -2,6 +2,7 @@ use crate::EmplaceInitializer;
 use std::alloc::{alloc, AllocError, Allocator};
 use std::ptr::NonNull;
 
+/// Extension for allocators to support `emplace(initializer)` method
 pub trait EmplaceAllocator {
     fn emplace<Init: EmplaceInitializer>(
         &self,
@@ -10,6 +11,7 @@ pub trait EmplaceAllocator {
 }
 
 impl<T: Allocator> EmplaceAllocator for T {
+    /// Allocate memory for value and emplace in it.
     #[inline(always)]
     fn emplace<Init: EmplaceInitializer>(
         &self,
@@ -22,6 +24,7 @@ impl<T: Allocator> EmplaceAllocator for T {
     }
 }
 
+/// Allocate memory for value by `std::alloc::alloc` and emplace in it.
 #[inline(always)]
 pub unsafe fn alloc_emplace<Init: EmplaceInitializer>(
     mut init: Init,

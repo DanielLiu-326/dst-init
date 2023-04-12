@@ -1,3 +1,41 @@
+//! A library for rust to provide ways to emplace dynamic sized type
+//! ```rust
+//! #![feature(alloc_layout_extra)]
+//! #![feature(ptr_metadata)]
+//!
+//! use dst_init_macros::dst;
+//! use dst_init::{BoxExt, Slice, SliceExt};
+//! #[dst]
+//! #[derive(Debug)]
+//! struct Test<A, B, C, D> {
+//!     a: A,
+//!     b: B,
+//!     c: C,
+//!     dst: [(C, D)],
+//! }
+//!
+//! #[dst]
+//! #[derive(Debug)]
+//! struct Test1<A, B, C, D> {
+//!     a: usize,
+//!     t: Test<A, B, C, D>,
+//! }
+//!
+//! let t = TestInit {
+//!     a: 1usize,
+//!     b: 1u8,
+//!     c: 1u8,
+//!     dst: Slice::iter_init(3, (0..).map(|i| (i as u8, i as usize))),
+//! };
+//! let u = Test1Init { a: 1usize, t };
+//! let a = Box::emplace(u);
+//! assert_eq!(a.a,1usize);
+//! assert_eq!(a.t.a,1);
+//! assert_eq!(a.t.b,1);
+//! assert_eq!(a.t.c,1);
+//! assert_eq!(a.t.dst,[(0,0),(1,1),(2,2)]);
+//!
+//! ```
 #![feature(ptr_metadata)]
 #![feature(unsize)]
 #![feature(alloc_layout_extra)]
@@ -7,6 +45,7 @@
 pub mod alloc;
 
 pub use dst_init_macros as macros;
+pub use macros::dst;
 use std::alloc::Layout;
 use std::marker::{PhantomData, Unsize};
 use std::ptr::{null, NonNull, Pointee};
@@ -29,18 +68,27 @@ pub trait Initializer<DstInit: EmplaceInitializer> {
 
 pub type Init<T, DstInit> = <T as Initializer<DstInit>>::Init;
 
+/// An abstract interface for all emplace initializer
 pub trait EmplaceInitializer {
     type Output: ?Sized;
+    /// Layout of the type
     fn layout(&mut self) -> Layout;
+    /// Emplace the type in given memory
     fn emplace(self, ptr: NonNull<u8>) -> NonNull<Self::Output>;
 }
 
+/// An Emplace Initializer for Slice, created by iterator and member number.
 pub struct SliceIterInitializer<Iter: Iterator> {
     size: usize,
     iter: Iter,
 }
 
 impl<Iter: Iterator> SliceIterInitializer<Iter> {
+    /// Create a SliceIterInitializer by iterator and member number. iterator::next will be called
+    /// for given member number times
+    ///
+    /// # Panics
+    /// would panic if iterator has less item than given member number
     #[inline(always)]
     pub fn new(size: usize, iter: Iter) -> Self {
         Self { size, iter }
@@ -72,12 +120,15 @@ impl<Iter: Iterator> EmplaceInitializer for SliceIterInitializer<Iter> {
     }
 }
 
+/// An Emplace Initializer for Slice, created by closure and member number.
 pub struct SliceFnInitializer<Item, F: FnMut() -> Item> {
     size: usize,
     f: F,
 }
 
 impl<Item, F: FnMut() -> Item> SliceFnInitializer<Item, F> {
+    /// Create a SliceIterInitializer by closure and member number. Given closure will be called
+    /// for given member number times
     #[inline(always)]
     pub fn new(size: usize, f: F) -> Self {
         Self { size, f }
@@ -106,6 +157,16 @@ impl<Item, F: FnMut() -> Item> EmplaceInitializer for SliceFnInitializer<Item, F
     }
 }
 
+/// An Emplace Initializer for `dyn` or `[T]` types, created by concrete type `T` or `[T;N]`.
+/// For example `usize` is sized type and implemented `Debug`:
+///```rust
+/// use std::fmt::Debug;
+/// use dst_init::{BoxExt, CoercionInitializer};
+///
+/// let init:CoercionInitializer<usize,dyn Debug> = CoercionInitializer::new(1usize);
+/// let boxed:Box<dyn Debug> = Box::emplace(init);
+/// assert_eq!(format!("{:?}",boxed),"1")
+///```
 pub struct CoercionInitializer<T: Unsize<U>, U: ?Sized> {
     t: T,
     phan: PhantomData<U>,
@@ -143,6 +204,7 @@ impl<T: Unsize<U>, U: ?Sized> EmplaceInitializer for CoercionInitializer<T, U> {
     }
 }
 
+/// An Emplace Initializer for sized type, created by itself.
 pub struct DirectInitializer<T> {
     t: T,
 }
@@ -176,14 +238,22 @@ impl<T> EmplaceInitializer for DirectInitializer<T> {
     }
 }
 
+/// Abstract for type `Box`,`Rc` and etc to allocate value by EmplaceInitializer types.
 pub trait BoxExt: Sized {
+
     type Output: ?Sized;
+
+    /// Allocate memory by `std::alloc::alloc()` and emplace value in it
+    /// Then use Self wrap it.
     fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(init: Init) -> Self;
 }
 
 impl<T: ?Sized> BoxExt for Box<T> {
+
     type Output = T;
 
+    /// Allocate memory by `std::alloc::alloc()` and emplace value in it
+    /// Then use `Box` wrap it.
     fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(
         mut init: Init,
     ) -> Box<Self::Output> {
@@ -199,6 +269,8 @@ impl<T: ?Sized> BoxExt for Box<T> {
 impl<T: ?Sized> BoxExt for Rc<T> {
     type Output = T;
 
+    /// Allocate memory by `std::alloc::alloc()` and emplace value in it
+    /// Then use `Rc` wrap it.
     fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(
         mut init: Init,
     ) -> Rc<Self::Output> {
@@ -214,6 +286,8 @@ impl<T: ?Sized> BoxExt for Rc<T> {
 impl<T: ?Sized> BoxExt for Arc<T> {
     type Output = T;
 
+    /// Allocate memory by `std::alloc::alloc()` and emplace value in it
+    /// Then use `Arc` wrap it.
     fn emplace<Init: EmplaceInitializer<Output = Self::Output>>(
         mut init: Init,
     ) -> Arc<Self::Output> {
@@ -226,13 +300,19 @@ impl<T: ?Sized> BoxExt for Arc<T> {
     }
 }
 
+/// pub type Slice\<T\> = \[T\];
 pub type Slice<T> = [T];
 
+/// Extension for type `[T]` to create EmplaceInitializer.
 pub trait SliceExt {
     type Item;
+
+    /// create SliceFnInitializer
     fn fn_init<F>(size: usize, f: F) -> impl EmplaceInitializer<Output = [Self::Item]>
     where
         F: FnMut() -> Self::Item;
+
+    /// create SliceIterInitializer
     fn iter_init<Iter>(size: usize, iter: Iter) -> impl EmplaceInitializer<Output = [Self::Item]>
     where
         Iter: Iterator<Item = Self::Item>;
@@ -241,6 +321,7 @@ pub trait SliceExt {
 impl<T> SliceExt for Slice<T> {
     type Item = T;
 
+    /// create SliceFnInitializer
     #[inline(always)]
     fn fn_init<F>(size: usize, f: F) -> impl EmplaceInitializer<Output = [Self::Item]>
     where
@@ -249,6 +330,7 @@ impl<T> SliceExt for Slice<T> {
         SliceFnInitializer::new(size, f)
     }
 
+    /// create SliceIterInitializer
     fn iter_init<Iter>(size: usize, iter: Iter) -> impl EmplaceInitializer<Output = [Self::Item]>
     where
         Iter: Iterator<Item = Self::Item>,
