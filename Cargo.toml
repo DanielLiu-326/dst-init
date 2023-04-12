@@ -2,6 +2,12 @@
 name = "dst-init"
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE.txt"
+description = "A library for rust to provide ways to emplace dynamic sized type"
+homepage = "https://github.com/danny-326/dst-init"
+documentation = "https://docs.rs/dst-init"
+repository = "https://github.com/danny-326/dst-init"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [profile.release]
