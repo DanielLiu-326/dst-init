@@ -339,13 +339,46 @@ impl<T> SliceExt for Slice<T> {
     }
 }
 
+pub struct RawInitializer<Output:?Sized, F>{
+    layout:Layout,
+    emplacer:F,
+    phan:PhantomData<Output>,
+}
+
+impl<Output, F> RawInitializer<Output,F>
+    where Output:?Sized, F:FnOnce(NonNull<u8>)->NonNull<Output>
+{
+    pub fn new(layout:Layout, f:F)->Self{
+        Self{
+            layout,
+            emplacer:f,
+            phan:Default::default()
+        }
+    }
+}
+
+impl<Output, F> EmplaceInitializer for RawInitializer<Output, F>
+    where Output:?Sized, F:FnOnce(NonNull<u8>)->NonNull<Output>
+{
+    type Output = Output;
+
+    fn layout(&mut self) -> Layout {
+        self.layout
+    }
+
+    fn emplace(self, ptr: NonNull<u8>) -> NonNull<Self::Output> {
+        (self.emplacer)(ptr)
+    }
+}
+
 #[cfg(test)]
 pub mod test {
+    use crate::{self as dst_init, RawInitializer};
     use crate::{
         CoercionInitializer, DirectInitializer, EmplaceInitializer, Initializer,
         SliceFnInitializer, SliceIterInitializer,
     };
-    use crate::macros::dst;
+    use dst_init_macros::dst;
     use std::alloc;
     use std::alloc::Layout;
     use std::fmt::{Debug, Formatter};
@@ -480,6 +513,23 @@ pub mod test {
         let data = alloc(init);
         for x in 0..100 {
             assert_eq!(data[x], x)
+        }
+    }
+
+    #[test]
+    fn test_raw_initializer(){
+        let init = RawInitializer::new(Layout::new::<[u8;10]>(),|ptr|{unsafe{
+            let mut ptr = ptr.as_ptr();
+            let tmp = ptr;
+            for x in 0..10{
+                *ptr = x as u8;
+                ptr = ptr.add(1);
+            }
+            return NonNull::new(std::ptr::slice_from_raw_parts_mut(tmp, 10)).expect("error when creating NonNull");
+        }});
+        let data = alloc(init);
+        for x in 0..10 {
+            assert_eq!(data[x], x as u8)
         }
     }
 }

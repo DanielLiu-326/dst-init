@@ -1,6 +1,6 @@
 [package]
 name = "dst-init"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license-file = "LICENSE.txt"
 description = "A library for rust to provide ways to emplace dynamic sized type"
