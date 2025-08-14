@@ -40,7 +40,6 @@
 #![feature(unsize)]
 #![feature(alloc_layout_extra)]
 #![feature(allocator_api)]
-#![feature(return_position_impl_trait_in_trait)]
 
 pub mod alloc;
 
@@ -199,7 +198,7 @@ impl<T: Unsize<U>, U: ?Sized> EmplaceInitializer for CoercionInitializer<T, U> {
         unsafe {
             let meta = metadata_of::<T, U>();
             ptr.as_ptr().cast::<T>().write(self.t);
-            NonNull::from_raw_parts(ptr.cast(), meta)
+            NonNull::from_raw_parts(ptr, meta)
         }
     }
 }
@@ -375,7 +374,7 @@ impl<Output, F> EmplaceInitializer for RawInitializer<Output, F>
 pub mod test {
     use crate::{self as dst_init, RawInitializer};
     use crate::{
-        CoercionInitializer, DirectInitializer, EmplaceInitializer, Initializer,
+        CoercionInitializer, DirectInitializer, EmplaceInitializer,
         SliceFnInitializer, SliceIterInitializer,
     };
     use dst_init_macros::dst;
@@ -437,6 +436,7 @@ pub mod test {
         }
     }
 
+    #[allow(dead_code)]
     #[derive(Debug)]
     pub struct DstStruct<Data: Debug + ?Sized> {
         a: u8,

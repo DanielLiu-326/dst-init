@@ -171,7 +171,7 @@ pub fn dst(_attr:TokenStream, input:TokenStream) -> TokenStream{
                 let (_, meta) = dst_init
                     .emplace(NonNull::new(dst.cast()).unwrap())
                     .to_raw_parts();
-                mem::transmute(NonNull::<#dst_type>::from_raw_parts(ptr.cast(), meta))
+                mem::transmute(NonNull::<#dst_type>::from_raw_parts(ptr, meta))
             }}
         }
     ).into()).unwrap();
